@@ -19,9 +19,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const noTransactionsEl = document.getElementById('no-transactions');
 
     // Grafico
-    const chartCanvas = document.getElementById('overview-chart').getContext('2d');
+    const overviewChartElement = document.getElementById('overview-chart'); // Ottieni l'ELEMENTO canvas
+    const chartCanvasCtx = overviewChartElement ? overviewChartElement.getContext('2d') : null; // Ottieni il CONTESTO (se l'elemento esiste)
     const chartMessageEl = document.getElementById('chart-message');
-    let overviewChart = null;
+    let overviewChart = null; // Variabile per l'istanza del grafico Chart.js
 
     // Categorie e Budget
     const manageCategoriesBtn = document.getElementById('manage-categories-btn');
@@ -418,137 +419,113 @@ document.addEventListener('DOMContentLoaded', () => {
         return filtered;
     }
        // --- Grafico Chart.js ---
-       function updateChart(filteredTransactions) {
-        // Assicurati che il contesto del canvas sia valido
-        if (!chartCanvas) {
-            console.error("Errore: Contesto del canvas 'overview-chart' non trovato!");
-            chartCanvas.style.display = 'none'; // Nascondi comunque l'area
+       // --- Grafico Chart.js ---
+function updateChart(filteredTransactions) {
+    // Controlla se l'elemento canvas e il suo contesto sono validi
+    if (!overviewChartElement || !chartCanvasCtx) {
+        console.error("Errore critico: Elemento canvas '#overview-chart' o suo contesto non trovato!");
+        // Prova a nascondere/mostrare elementi se esistono
+        if(overviewChartElement) overviewChartElement.style.display = 'none';
+        if(chartMessageEl) {
             chartMessageEl.textContent = 'Errore inizializzazione grafico.';
             chartMessageEl.classList.remove('hidden');
-            return;
         }
+        return; // Non possiamo procedere
+    }
 
-        // Distruggi grafico esistente se c'è
-        if (overviewChart) {
-            try {
-                overviewChart.destroy();
-                overviewChart = null; // Resetta la variabile
-                console.log("Grafico precedente distrutto.");
-            } catch (e) {
-                console.error("Errore nel distruggere il grafico precedente:", e);
-                // Prosegui comunque tentando di creare il nuovo grafico
-            }
-        }
-
-        const expensesByCategory = {};
-        let totalExpenses = 0;
-
-        filteredTransactions
-            .filter(t => t.type === 'expense')
-            .forEach(t => {
-                // Usa una categoria di fallback se non trovata
-                const categoryName = getCategoryNameById(t.category) || 'Non Categorizzato';
-                expensesByCategory[categoryName] = (expensesByCategory[categoryName] || 0) + t.amount;
-                totalExpenses += t.amount;
-            });
-
-        console.log("Dati per il grafico:", { expensesByCategory, totalExpenses }); // DEBUG
-
-        // Controlla se ci sono dati validi per il grafico
-        const categoryLabels = Object.keys(expensesByCategory);
-        const categoryData = Object.values(expensesByCategory);
-
-        if (totalExpenses <= 0 || categoryLabels.length === 0) {
-            console.log("Nessuna spesa valida trovata per il grafico.");
-            chartCanvas.style.display = 'none'; // Nascondi canvas
-            chartMessageEl.textContent = 'Nessuna spesa nel periodo selezionato per mostrare il grafico.';
-            chartMessageEl.classList.remove('hidden'); // Mostra messaggio
-            return; // Esci dalla funzione
-        }
-
-        // Se ci sono dati, mostra il canvas e nascondi il messaggio
-        console.log("Dati validi trovati, tentativo creazione grafico.");
-        chartCanvas.style.display = 'block'; // Mostra canvas
-        chartMessageEl.classList.add('hidden'); // Nascondi messaggio
-
-        // Colori per il grafico
-        const backgroundColors = [
-            '#4db6ac', '#80cbc4', '#26a69a', '#00897b', '#00796b',
-            '#00695c', '#004d40', '#a7ffeb', '#64ffda', '#1de9b6',
-            '#b2dfdb', '#e0f2f1' // Aggiunti altri colori per più categorie
-        ];
-         // Usa colori diversi o ripeti se le categorie sono più dei colori base
-         const chartBackgroundColors = categoryLabels.map((_, index) => backgroundColors[index % backgroundColors.length]);
-         const chartBorderColors = chartBackgroundColors.map(color => color.replace(')', ', 0.9)').replace('rgb', 'rgba')); // Rendi bordi leggermente trasparenti o solidi
-
-
+    // Distruggi grafico esistente se c'è
+    if (overviewChart) {
         try {
-            overviewChart = new Chart(chartCanvas, {
-                type: 'doughnut', // o 'pie'
-                data: {
-                    labels: categoryLabels,
-                    datasets: [{
-                        label: 'Spese per Categoria',
-                        data: categoryData,
-                        backgroundColor: chartBackgroundColors,
-                        borderColor: chartBorderColors, // Usa colori bordo calcolati
-                        borderWidth: 1,
-                        hoverOffset: 8 // Aumenta leggermente l'effetto hover
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false, // Cruciale per usare l'altezza del contenitore
-                    animation: {
-                        animateScale: true, // Effetto animazione all'apparizione
-                        animateRotate: true
-                    },
-                    plugins: {
-                        legend: {
-                            position: 'bottom',
-                            labels: {
-                                color: '#e0f2f1', // Colore testo legenda
-                                padding: 15,
-                                usePointStyle: true, // Usa cerchietti invece di quadrati
-                                boxWidth: 10 // Dimensione cerchietti
-                            }
-                        },
-                        title: {
-                            display: true,
-                            text: `Distribuzione Spese (${selectedPeriodDisplay.textContent.slice(1, -1)})`,
-                            color: '#fff',
-                            font: { size: 16 },
-                            padding: { top: 10, bottom: 20 }
-                        },
-                        tooltip: {
-                             backgroundColor: 'rgba(0, 0, 0, 0.8)', // Sfondo tooltip più scuro
-                             titleColor: '#fff',
-                             bodyColor: '#fff',
-                             callbacks: {
-                                label: function(context) {
-                                    let label = context.label || '';
-                                    if (label) { label += ': '; }
-                                    if (context.parsed !== null) {
-                                        label += formatCurrency(context.parsed);
-                                        const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                        const percentage = total > 0 ? ((context.parsed / total) * 100).toFixed(1) : 0;
-                                        label += ` (${percentage}%)`;
-                                    }
-                                    return label;
-                                }
+            overviewChart.destroy();
+            overviewChart = null;
+            console.log("Grafico precedente distrutto.");
+        } catch (e) {
+            console.error("Errore nel distruggere il grafico precedente:", e);
+        }
+    }
+
+    // Calcola spese per categoria
+    const expensesByCategory = {};
+    let totalExpenses = 0;
+    filteredTransactions
+        .filter(t => t.type === 'expense')
+        .forEach(t => {
+            const categoryName = getCategoryNameById(t.category) || 'Non Categorizzato';
+            expensesByCategory[categoryName] = (expensesByCategory[categoryName] || 0) + t.amount;
+            totalExpenses += t.amount;
+        });
+
+    console.log("Dati per il grafico:", { expensesByCategory, totalExpenses });
+
+    const categoryLabels = Object.keys(expensesByCategory);
+    const categoryData = Object.values(expensesByCategory);
+
+    // Gestisci la visualizzazione del canvas o del messaggio
+    if (totalExpenses <= 0 || categoryLabels.length === 0) {
+        console.log("Nessuna spesa valida trovata per il grafico.");
+        overviewChartElement.style.display = 'none'; // Nascondi l'ELEMENTO canvas
+        if (chartMessageEl) chartMessageEl.classList.remove('hidden'); // Mostra messaggio (se esiste)
+        return;
+    } else {
+        console.log("Dati validi trovati, tentativo creazione grafico.");
+        overviewChartElement.style.display = 'block'; // Mostra l'ELEMENTO canvas
+        if (chartMessageEl) chartMessageEl.classList.add('hidden'); // Nascondi messaggio (se esiste)
+    }
+
+    // Colori
+    const backgroundColors = ['#4db6ac', '#80cbc4', '#26a69a', '#00897b', '#00796b', '#00695c', '#004d40', '#a7ffeb', '#64ffda', '#1de9b6', '#b2dfdb', '#e0f2f1'];
+    const chartBackgroundColors = categoryLabels.map((_, index) => backgroundColors[index % backgroundColors.length]);
+    const chartBorderColors = chartBackgroundColors.map(color => color.replace(')', ', 0.9)').replace('rgb', 'rgba'));
+
+    // Crea il nuovo grafico usando il CONTESTO
+    try {
+        overviewChart = new Chart(chartCanvasCtx, { // <<< USA IL CONTESTO QUI
+            type: 'doughnut',
+            data: {
+                labels: categoryLabels,
+                datasets: [{
+                    label: 'Spese per Categoria',
+                    data: categoryData,
+                    backgroundColor: chartBackgroundColors,
+                    borderColor: chartBorderColors,
+                    borderWidth: 1,
+                    hoverOffset: 8
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { animateScale: true, animateRotate: true },
+                plugins: {
+                    legend: { position: 'bottom', labels: { color: '#e0f2f1', padding: 15, usePointStyle: true, boxWidth: 10 } },
+                    title: { display: true, text: `Distribuzione Spese (${selectedPeriodDisplay.textContent.slice(1, -1)})`, color: '#fff', font: { size: 16 }, padding: { top: 10, bottom: 20 } },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)', titleColor: '#fff', bodyColor: '#fff',
+                        callbacks: {
+                            label: function(context) { /* ... (callback tooltip come prima) ... */
+                                let label = context.label || ''; if (label) { label += ': '; }
+                                if (context.parsed !== null) {
+                                    label += formatCurrency(context.parsed);
+                                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                    const percentage = total > 0 ? ((context.parsed / total) * 100).toFixed(1) : 0;
+                                    label += ` (${percentage}%)`;
+                                } return label;
                             }
                         }
                     }
                 }
-            });
-            console.log("Nuovo grafico creato con successo.");
-        } catch(error) {
-            console.error("Errore durante la creazione dell'istanza Chart.js:", error);
-            chartCanvas.style.display = 'none'; // Nascondi in caso di errore
+            }
+        });
+        console.log("Nuovo grafico creato con successo.");
+    } catch(error) {
+        console.error("Errore durante la creazione dell'istanza Chart.js:", error);
+        overviewChartElement.style.display = 'none'; // Nascondi l'ELEMENTO in caso di errore
+        if (chartMessageEl) {
             chartMessageEl.textContent = 'Errore durante la creazione del grafico.';
             chartMessageEl.classList.remove('hidden');
         }
     }
+}
     // --- EXPORT / IMPORT (Excel con SheetJS) ---
     function exportToExcel() {
         try {
