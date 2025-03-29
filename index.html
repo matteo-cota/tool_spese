@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestione Spese Mensili</title>
+    <title>Gestione Spese Avanzata (Excel)</title>
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"> <!-- Per le icone -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1><i class="fas fa-wallet"></i> Gestore Spese Personali</h1>
-            <p>Traccia le tue finanze mensili e annuali</p>
+            <h1><i class="fas fa-chart-pie"></i> Gestore Spese Avanzato</h1>
+            <p>Traccia, analizza e gestisci le tue finanze con Export/Import Excel</p>
         </header>
 
         <main>
@@ -19,7 +19,7 @@
             <section id="add-transaction-section" class="card">
                 <h2><i class="fas fa-plus-circle"></i> Aggiungi Nuova Transazione</h2>
                 <form id="transaction-form">
-                    <div class="form-control">
+                     <div class="form-control">
                         <label for="type">Tipo:</label>
                         <select id="type" required>
                             <option value="income">Entrata</option>
@@ -34,6 +34,15 @@
                         <label for="amount">Importo (€):</label>
                         <input type="number" id="amount" placeholder="0.00" min="0.01" step="0.01" required>
                     </div>
+                     <div class="form-control">
+                        <label for="category">Categoria:</label>
+                        <select id="category" required>
+                             <option value="">-- Seleziona Categoria --</option>
+                            <!-- Opzioni Categoria caricate da JS -->
+                        </select>
+                         <!-- Opzione per aggiungere nuova categoria -->
+                         <input type="text" id="new-category" placeholder="O digita nuova categoria..." style="margin-top: 5px; display: none;">
+                    </div>
                     <div class="form-control">
                         <label for="date">Data:</label>
                         <input type="date" id="date" required>
@@ -44,26 +53,32 @@
                 </form>
             </section>
 
-            <!-- Sezione Riepilogo -->
+            <!-- Sezione Riepilogo e Grafico -->
             <section id="overview-section" class="card">
-                <h2><i class="fas fa-chart-line"></i> Riepilogo Finanziario</h2>
+                <h2><i class="fas fa-chart-line"></i> Riepilogo e Analisi</h2>
                 <div class="filter-controls">
-                    <label for="period-select">Visualizza:</label>
-                    <select id="period-select">
-                        <option value="current_month">Mese Corrente</option>
-                        <option value="current_year">Anno Corrente</option>
-                        <option value="all_time">Tutto</option>
-                        <!-- Opzioni per mesi/anni specifici verranno aggiunte da JS -->
-                    </select>
-                    <span id="selected-period-display"></span>
+                    <div class="filter-item">
+                        <label for="period-select">Periodo:</label>
+                        <select id="period-select">
+                            <option value="current_month">Mese Corrente</option>
+                            <option value="current_year">Anno Corrente</option>
+                            <option value="all_time">Tutto</option>
+                            <!-- Opzioni periodo specifiche caricate da JS -->
+                        </select>
+                         <span id="selected-period-display" class="period-text"></span>
+                    </div>
+                     <div class="filter-item">
+                         <label for="search-input">Cerca:</label>
+                         <input type="search" id="search-input" placeholder="Cerca descrizione o categoria...">
+                    </div>
                 </div>
                 <div class="overview-details">
                     <div class="overview-item income">
-                        <h3><i class="fas fa-arrow-up"></i> Entrate Totali</h3>
+                        <h3><i class="fas fa-arrow-up"></i> Entrate</h3>
                         <p id="total-income">€ 0.00</p>
                     </div>
                     <div class="overview-item expense">
-                        <h3><i class="fas fa-arrow-down"></i> Spese Totali</h3>
+                        <h3><i class="fas fa-arrow-down"></i> Spese</h3>
                         <p id="total-expense">€ 0.00</p>
                     </div>
                     <div class="overview-item balance">
@@ -71,73 +86,93 @@
                         <p id="balance">€ 0.00</p>
                     </div>
                 </div>
-                 <!-- Aggiungeremo qui un canvas per un grafico se vogliamo -->
-                 <!-- <canvas id="overview-chart"></canvas> -->
+                <!-- Contenitore Grafico -->
+                <div class="chart-container">
+                    <canvas id="overview-chart"></canvas>
+                     <p id="chart-message" class="hidden">Dati insufficienti per visualizzare il grafico.</p>
+                </div>
+            </section>
+
+             <!-- Sezione Categorie e Budget (Semplificata) -->
+            <section id="categories-budget-section" class="card">
+                <h2><i class="fas fa-tags"></i> Categorie e Budget (Mese Corrente)</h2>
+                 <button id="manage-categories-btn" class="btn btn-secondary btn-small">Gestisci Categorie/Budget</button>
+                 <div id="budget-display" class="budget-list">
+                     <!-- Info budget caricate da JS -->
+                     <p>Caricamento budget...</p>
+                 </div>
             </section>
 
             <!-- Sezione Storico Transazioni -->
             <section id="history-section" class="card">
-                <h2><i class="fas fa-history"></i> Storico Transazioni</h2>
-                <div class="table-container">
+                 <div class="history-header">
+                     <h2><i class="fas fa-history"></i> Storico Transazioni</h2>
+                     <div class="export-import-buttons">
+                        <!-- Pulsanti aggiornati per Excel -->
+                        <button id="export-excel-btn" class="btn btn-secondary btn-small"><i class="fas fa-file-excel"></i> Esporta Excel</button>
+                        <button id="export-csv-btn" class="btn btn-secondary btn-small"><i class="fas fa-file-csv"></i> Esporta CSV (Solo Transazioni)</button>
+                        <label for="import-file-input" class="btn btn-secondary btn-small"><i class="fas fa-file-upload"></i> Importa Excel</label>
+                        <input type="file" id="import-file-input" accept=".xlsx, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display: none;">
+                     </div>
+                 </div>
+                 <div class="table-container">
                      <table id="transaction-table">
                         <thead>
                             <tr>
                                 <th>Data</th>
                                 <th>Tipo</th>
+                                <th>Categoria</th>
                                 <th>Descrizione</th>
                                 <th>Importo</th>
                                 <th>Azioni</th>
                             </tr>
                         </thead>
                         <tbody id="transaction-list">
-                            <!-- Le righe delle transazioni verranno inserite qui da JS -->
-                            <!-- Esempio riga:
-                            <tr>
-                                <td>2023-10-27</td>
-                                <td class="type-income">Entrata</td>
-                                <td>Stipendio</td>
-                                <td class="amount-income">+ €1500.00</td>
-                                <td>
-                                    <button class="btn-icon btn-edit"><i class="fas fa-edit"></i></button>
-                                    <button class="btn-icon btn-delete"><i class="fas fa-trash"></i></button>
-                                </td>
-                            </tr>
-                             -->
+                            <!-- Righe caricate da JS -->
                         </tbody>
                     </table>
                 </div>
-                <p id="no-transactions" class="hidden">Nessuna transazione trovata per il periodo selezionato.</p>
+                <p id="no-transactions" class="hidden">Nessuna transazione trovata.</p>
             </section>
+
         </main>
 
         <footer>
-            <p>© 2023 Gestore Spese Personali. Creato con <i class="fas fa-heart"></i>.</p>
+            <p>© 2025 Gestore Spese Avanzato. <span class="backend-note">Nota: I dati sono salvati localmente nel browser.</span></p>
         </footer>
     </div>
 
-    <!-- Modal per la modifica (inizialmente nascosto) -->
+    <!-- Modal Modifica (Aggiornato con Categoria) -->
     <div id="edit-modal" class="modal">
         <div class="modal-content card">
             <span class="close-modal-btn">×</span>
             <h2><i class="fas fa-edit"></i> Modifica Transazione</h2>
             <form id="edit-transaction-form">
-                <input type="hidden" id="edit-id"> <!-- Campo nascosto per l'ID -->
-                <div class="form-control">
+                <input type="hidden" id="edit-id">
+                 <div class="form-control">
                     <label for="edit-type">Tipo:</label>
                     <select id="edit-type" required>
                         <option value="income">Entrata</option>
                         <option value="expense">Spesa</option>
                     </select>
                 </div>
-                <div class="form-control">
+                 <div class="form-control">
                     <label for="edit-description">Descrizione:</label>
                     <input type="text" id="edit-description" required>
                 </div>
-                <div class="form-control">
+                 <div class="form-control">
                     <label for="edit-amount">Importo (€):</label>
                     <input type="number" id="edit-amount" min="0.01" step="0.01" required>
                 </div>
-                <div class="form-control">
+                 <div class="form-control">
+                    <label for="edit-category">Categoria:</label>
+                    <select id="edit-category" required>
+                         <option value="">-- Seleziona Categoria --</option>
+                        <!-- Opzioni caricate da JS -->
+                    </select>
+                     <input type="text" id="edit-new-category" placeholder="O digita nuova categoria..." style="margin-top: 5px; display: none;">
+                </div>
+                 <div class="form-control">
                     <label for="edit-date">Data:</label>
                     <input type="date" id="edit-date" required>
                 </div>
@@ -148,8 +183,33 @@
         </div>
     </div>
 
+     <!-- Modal Gestione Categorie/Budget -->
+    <div id="manage-categories-modal" class="modal">
+        <div class="modal-content card">
+            <span class="close-modal-btn category-modal-close">×</span>
+            <h2><i class="fas fa-tasks"></i> Gestisci Categorie e Budget Mensili</h2>
+            <div id="category-list-manager">
+                <!-- Lista categorie e input budget caricati da JS -->
+                <p>Caricamento...</p>
+            </div>
+             <div class="form-control">
+                 <label for="add-category-input">Aggiungi Nuova Categoria (Spesa):</label>
+                 <input type="text" id="add-category-input" placeholder="Nome nuova categoria di spesa">
+                 <button id="add-category-btn" class="btn btn-secondary btn-small" style="margin-top: 10px;"><i class="fas fa-plus"></i> Aggiungi</button>
+             </div>
+            <button id="save-budgets-btn" class="btn btn-update" style="margin-top: 20px;">
+                <i class="fas fa-save"></i> Salva Budget
+            </button>
+        </div>
+    </div>
+
+    <!-- *** LIBRERIE JAVASCRIPT ESTERNE *** -->
+    <!-- Chart.js per i grafici -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- SheetJS (js-xlsx) per la gestione di file Excel -->
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+
+    <!-- Il tuo script principale -->
     <script src="script.js"></script>
-    <!-- Potresti aggiungere qui librerie JS esterne se necessario (es. per grafici) -->
-    <!-- <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> -->
 </body>
 </html>

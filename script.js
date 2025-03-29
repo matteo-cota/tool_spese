@@ -4,16 +4,39 @@ document.addEventListener('DOMContentLoaded', () => {
     const typeInput = document.getElementById('type');
     const descriptionInput = document.getElementById('description');
     const amountInput = document.getElementById('amount');
+    const categorySelect = document.getElementById('category');
+    const newCategoryInput = document.getElementById('new-category');
     const dateInput = document.getElementById('date');
 
     const periodSelect = document.getElementById('period-select');
     const selectedPeriodDisplay = document.getElementById('selected-period-display');
+    const searchInput = document.getElementById('search-input');
     const totalIncomeEl = document.getElementById('total-income');
     const totalExpenseEl = document.getElementById('total-expense');
     const balanceEl = document.getElementById('balance');
 
     const transactionList = document.getElementById('transaction-list');
     const noTransactionsEl = document.getElementById('no-transactions');
+
+    // Grafico
+    const chartCanvas = document.getElementById('overview-chart').getContext('2d');
+    const chartMessageEl = document.getElementById('chart-message');
+    let overviewChart = null;
+
+    // Categorie e Budget
+    const manageCategoriesBtn = document.getElementById('manage-categories-btn');
+    const budgetDisplayEl = document.getElementById('budget-display');
+    const manageCategoriesModal = document.getElementById('manage-categories-modal');
+    const categoryListManagerEl = document.getElementById('category-list-manager');
+    const addCategoryInput = document.getElementById('add-category-input');
+    const addCategoryBtn = document.getElementById('add-category-btn');
+    const saveBudgetsBtn = document.getElementById('save-budgets-btn');
+    const categoryModalCloseBtn = manageCategoriesModal.querySelector('.category-modal-close');
+
+    // Export/Import
+    const exportExcelBtn = document.getElementById('export-excel-btn'); // Aggiornato
+    const exportCsvBtn = document.getElementById('export-csv-btn');
+    const importFileInput = document.getElementById('import-file-input'); // Accetta .xlsx
 
     // Modal Modifica
     const editModal = document.getElementById('edit-modal');
@@ -22,375 +45,682 @@ document.addEventListener('DOMContentLoaded', () => {
     const editTypeInput = document.getElementById('edit-type');
     const editDescriptionInput = document.getElementById('edit-description');
     const editAmountInput = document.getElementById('edit-amount');
+    const editCategorySelect = document.getElementById('edit-category');
+    const editNewCategoryInput = document.getElementById('edit-new-category');
     const editDateInput = document.getElementById('edit-date');
-    const closeModalBtn = document.querySelector('.close-modal-btn');
+    const closeModalBtn = document.querySelector('.close-modal-btn:not(.category-modal-close)');
 
     // --- Stato Applicazione ---
-    // Carica transazioni da localStorage o usa un array vuoto
-    let transactions = JSON.parse(localStorage.getItem('transactions')) || [];
-    let currentFilter = 'current_month'; // Filtro iniziale
+    let transactions = JSON.parse(localStorage.getItem('transactions_v2')) || [];
+    let categories = JSON.parse(localStorage.getItem('categories_v2')) || [
+        { id: 'cat_income_stipendio', name: 'Stipendio', type: 'income' },
+        { id: 'cat_income_altro', name: 'Altre Entrate', type: 'income' },
+        { id: 'cat_expense_casa', name: 'Casa (Affitto/Mutuo)', type: 'expense' },
+        { id: 'cat_expense_bollette', name: 'Bollette', type: 'expense' },
+        { id: 'cat_expense_spesa', name: 'Supermercato', type: 'expense' },
+        { id: 'cat_expense_trasporti', name: 'Trasporti', type: 'expense' },
+        { id: 'cat_expense_svago', name: 'Svago/Uscite', type: 'expense' },
+        { id: 'cat_expense_salute', name: 'Salute', type: 'expense' },
+        { id: 'cat_expense_altro', name: 'Altro (Spese)', type: 'expense' },
+    ];
+    let budgets = JSON.parse(localStorage.getItem('budgets_v2')) || {}; // { categoryId: amount }
+    let currentFilter = 'current_month';
+    let searchTerm = '';
+    let debounceTimer;
 
-    // --- Funzioni ---
-
-    // Formattazione Valuta
-    function formatCurrency(amount) {
-        return `€ ${amount.toFixed(2).replace('.', ',')}`;
-    }
-
-    // Formattazione Data (YYYY-MM-DD)
+    // --- Funzioni di Utilità ---
+    function formatCurrency(amount) { return `€ ${amount.toFixed(2).replace('.', ',')}`; }
     function formatDate(dateString) {
-        const date = new Date(dateString + 'T00:00:00'); // Assicura interpretazione locale
-        return date.toLocaleDateString('it-IT', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric'
+         // Gestisce sia stringhe YYYY-MM-DD che oggetti Date
+         try {
+            let date;
+            if (dateString instanceof Date) {
+                date = dateString;
+            } else if (typeof dateString === 'string' && dateString.length >= 10) {
+                 // Assicurati che sia interpretata correttamente come locale aggiungendo l'ora
+                 const parts = dateString.substring(0, 10).split('-');
+                 if (parts.length === 3) {
+                    // Crea la data in UTC per evitare problemi di timezone, poi formatta
+                    date = new Date(Date.UTC(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2])));
+                 } else {
+                    return "Data invalida"; // O gestisci diversamente
+                 }
+            } else {
+                 return "Data invalida";
+            }
+
+            return date.toLocaleDateString('it-IT', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                timeZone: 'UTC' // Specifica la timezone usata per la creazione
+            });
+         } catch (e) {
+             console.error("Errore formattazione data:", dateString, e);
+             return "Errore data";
+         }
+     }
+    function generateID(prefix = 'tx') { return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).substr(2, 5)}`; }
+    function setDefaultDate() {
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = (today.getMonth() + 1).toString().padStart(2, '0');
+        const day = today.getDate().toString().padStart(2, '0');
+        dateInput.value = `${year}-${month}-${day}`;
+    }
+
+    // --- Funzioni Salvataggio Dati ---
+    function saveTransactions() { localStorage.setItem('transactions_v2', JSON.stringify(transactions)); }
+    function saveCategories() { localStorage.setItem('categories_v2', JSON.stringify(categories)); }
+    function saveBudgets() { localStorage.setItem('budgets_v2', JSON.stringify(budgets)); }
+
+    // --- Gestione Categorie ---
+    function getCategoryNameById(id) { const category = categories.find(cat => cat.id === id); return category ? category.name : 'Non Categorizzato'; }
+    function getCategoriesByType(type) { return categories.filter(cat => cat.type === type); }
+    function populateCategorySelect(selectElement, transactionType, selectedCategoryId = null) {
+        selectElement.innerHTML = '<option value="">-- Seleziona --</option>';
+        const relevantCategories = getCategoriesByType(transactionType);
+        relevantCategories.forEach(cat => {
+            const option = document.createElement('option');
+            option.value = cat.id;
+            option.textContent = cat.name;
+            if (cat.id === selectedCategoryId) { option.selected = true; }
+            selectElement.appendChild(option);
         });
+        const newOption = document.createElement('option');
+        newOption.value = 'add_new';
+        newOption.textContent = '-- Aggiungi Nuova Categoria --';
+        selectElement.appendChild(newOption);
     }
-     // Genera ID Univoco (semplice timestamp + random)
-    function generateID() {
-        return Date.now().toString(36) + Math.random().toString(36).substr(2);
+    function handleNewCategoryInputVisibility(selectElement, inputElement) {
+        if (selectElement.value === 'add_new') {
+            inputElement.style.display = 'block';
+            inputElement.required = true;
+            inputElement.focus();
+        } else {
+            inputElement.style.display = 'none';
+            inputElement.required = false;
+            inputElement.value = '';
+        }
+    }
+    typeInput.addEventListener('change', () => { populateCategorySelect(categorySelect, typeInput.value); handleNewCategoryInputVisibility(categorySelect, newCategoryInput); });
+    categorySelect.addEventListener('change', () => { handleNewCategoryInputVisibility(categorySelect, newCategoryInput); });
+    editTypeInput.addEventListener('change', () => { populateCategorySelect(editCategorySelect, editTypeInput.value); handleNewCategoryInputVisibility(editCategorySelect, editNewCategoryInput); });
+    editCategorySelect.addEventListener('change', () => { handleNewCategoryInputVisibility(editCategorySelect, editNewCategoryInput); });
+
+    function addCategory(name, type) {
+        name = name.trim();
+        if (!name || categories.some(cat => cat.name.toLowerCase() === name.toLowerCase() && cat.type === type)) {
+            console.warn('Nome categoria vuoto o già esistente:', name, type); return null;
+        }
+        const newCat = { id: generateID('cat'), name: name, type: type };
+        categories.push(newCat);
+        saveCategories();
+        console.log('Categoria aggiunta:', newCat);
+        return newCat;
     }
 
-    // Salva Transazioni su localStorage
-    function saveTransactions() {
-        localStorage.setItem('transactions', JSON.stringify(transactions));
+    // --- Gestione Budget e Modal Categorie ---
+    function populateCategoryManager() {
+        categoryListManagerEl.innerHTML = '';
+        const incomeCats = getCategoriesByType('income');
+        const expenseCats = getCategoriesByType('expense');
+
+        function createCategoryListHTML(catList, title) {
+            let html = `<h3 style="margin-top:15px; margin-bottom: 5px; color: var(--light-green);">${title}</h3>`;
+            if (catList.length === 0) { html += '<p>Nessuna categoria.</p>'; }
+            else {
+                catList.forEach(cat => {
+                    const budgetAmount = budgets[cat.id] || 0;
+                    const budgetInputHTML = cat.type === 'expense'
+                        ? `<input type="number" class="category-budget-input" data-category-id="${cat.id}" value="${budgetAmount}" min="0" step="1" placeholder="Budget"> €`
+                        : '<span style="color: #aaa; font-style: italic;">(Entrata)</span>';
+                    html += `<div class="category-manager-item"><label for="budget-${cat.id}">${cat.name}</label><span>${budgetInputHTML}</span></div>`;
+                });
+            }
+            return html;
+        }
+        categoryListManagerEl.innerHTML = createCategoryListHTML(expenseCats, 'Categorie Spesa (Budget Mensile)') + createCategoryListHTML(incomeCats, 'Categorie Entrata');
+    }
+    manageCategoriesBtn.addEventListener('click', () => { populateCategoryManager(); manageCategoriesModal.style.display = 'block'; });
+    categoryModalCloseBtn.addEventListener('click', () => { manageCategoriesModal.style.display = 'none'; });
+    window.addEventListener('click', (e) => { if (e.target === manageCategoriesModal) { manageCategoriesModal.style.display = 'none'; } if (e.target === editModal) { closeEditModal(); } });
+    addCategoryBtn.addEventListener('click', () => {
+        const name = addCategoryInput.value.trim();
+        if (name) {
+            const added = addCategory(name, 'expense'); // Aggiunge solo spese da qui
+            if (added) {
+                addCategoryInput.value = '';
+                populateCategoryManager();
+                populateCategorySelect(categorySelect, typeInput.value);
+                populateCategorySelect(editCategorySelect, editTypeInput.value);
+            } else { alert('Categoria di spesa già esistente o nome non valido.'); }
+        }
+    });
+    saveBudgetsBtn.addEventListener('click', () => {
+        const budgetInputs = categoryListManagerEl.querySelectorAll('.category-budget-input');
+        budgets = {};
+        budgetInputs.forEach(input => {
+            const categoryId = input.dataset.categoryId;
+            const amount = parseFloat(input.value) || 0;
+            if (amount > 0) { budgets[categoryId] = amount; }
+        });
+        saveBudgets();
+        manageCategoriesModal.style.display = 'none';
+        renderUI();
+        alert('Budget salvati con successo!');
+    });
+    function displayBudgets() {
+        const currentMonthTransactions = getFilteredTransactions('current_month');
+        const expenseCategories = getCategoriesByType('expense');
+        let html = '';
+
+        if (Object.keys(budgets).length === 0 && expenseCategories.length > 0) {
+            html = '<p>Nessun budget impostato. <a href="#" id="set-budget-link">Imposta budget</a>.</p>';
+        } else if (expenseCategories.length === 0) {
+            html = '<p>Nessuna categoria di spesa definita.</p>';
+        } else {
+            expenseCategories.forEach(cat => {
+                const budgetAmount = budgets[cat.id];
+                if (budgetAmount && budgetAmount > 0) {
+                    const spentAmount = currentMonthTransactions
+                        .filter(t => t.type === 'expense' && t.category === cat.id)
+                        .reduce((sum, t) => sum + t.amount, 0);
+                    const percentage = Math.min((spentAmount / budgetAmount) * 100, 100);
+                    const overBudget = spentAmount > budgetAmount;
+                    html += `
+                        <div class="budget-item">
+                            <span class="budget-category-name">${cat.name}</span>
+                            <span class="budget-progress">
+                                ${formatCurrency(spentAmount)} / ${formatCurrency(budgetAmount)}
+                                <div class="budget-bar-container"><div class="budget-bar ${overBudget ? 'over-budget' : ''}" style="width: ${percentage}%"></div></div>
+                            </span>
+                        </div>`;
+                }
+            });
+            if (html === '') { html = '<p>Nessun budget impostato (> 0). <a href="#" id="set-budget-link">Imposta budget</a>.</p>'; }
+        }
+        budgetDisplayEl.innerHTML = html;
+        const setBudgetLink = document.getElementById('set-budget-link');
+        if (setBudgetLink) {
+            setBudgetLink.addEventListener('click', (e) => { e.preventDefault(); populateCategoryManager(); manageCategoriesModal.style.display = 'block'; });
+        }
     }
 
-    // Aggiunge una transazione all'interfaccia
-    function addTransactionDOM(transaction, animate = false) {
+    // --- Gestione Transazioni (Aggiunta, Modifica, Eliminazione DOM) ---
+    function addTransactionDOM(transaction) {
         const item = document.createElement('tr');
         item.setAttribute('data-id', transaction.id);
-
         const isExpense = transaction.type === 'expense';
         const amountSign = isExpense ? '-' : '+';
         const amountClass = isExpense ? 'amount-expense' : 'amount-income';
         const typeClass = isExpense ? 'type-expense' : 'type-income';
         const typeText = isExpense ? 'Spesa' : 'Entrata';
+        const categoryName = getCategoryNameById(transaction.category);
 
-        // Aggiungi attributi data-label per CSS responsive
         item.innerHTML = `
             <td data-label="Data">${formatDate(transaction.date)}</td>
             <td data-label="Tipo" class="${typeClass}">${typeText}</td>
+            <td data-label="Categoria">${categoryName}</td>
             <td data-label="Descrizione">${transaction.description}</td>
             <td data-label="Importo" class="${amountClass}">${amountSign} ${formatCurrency(transaction.amount)}</td>
             <td data-label="Azioni">
-                <button class="btn-icon btn-edit" aria-label="Modifica">
-                    <i class="fas fa-edit"></i>
-                </button>
-                <button class="btn-icon btn-delete" aria-label="Elimina">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </td>
-        `;
-
-        // Aggiungi effetto fade-in se richiesto
-        if (animate) {
-            item.style.opacity = '0'; // Inizia trasparente
-             // Usa requestAnimationFrame per assicurare che l'elemento sia nel DOM prima di animare
-            requestAnimationFrame(() => {
-                 // Usa una piccola transizione CSS o l'animazione keyframe definita
-                item.style.transition = 'opacity 0.5s ease';
-                item.style.opacity = '1';
-                 // O attiva l'animazione CSS
-                 // item.style.animation = 'fadeInRow 0.5s ease-out forwards';
-            });
-        }
-
-        // Aggiungi event listener per i bottoni Edit/Delete DENTRO questa funzione
+                <button class="btn-icon btn-edit" aria-label="Modifica"><i class="fas fa-edit"></i></button>
+                <button class="btn-icon btn-delete" aria-label="Elimina"><i class="fas fa-trash"></i></button>
+            </td>`;
         item.querySelector('.btn-edit').addEventListener('click', () => openEditModal(transaction.id));
         item.querySelector('.btn-delete').addEventListener('click', () => deleteTransaction(transaction.id));
-
-
-        transactionList.appendChild(item); // Aggiunge in fondo
-        // Per aggiungere in cima: transactionList.insertBefore(item, transactionList.firstChild);
+        transactionList.appendChild(item);
     }
-
-
-    // Aggiorna Riepilogo (Entrate, Spese, Saldo)
-    function updateOverview(filteredTransactions) {
-        const amounts = filteredTransactions.map(t => t.type === 'income' ? t.amount : -t.amount);
-
-        const income = amounts
-            .filter(item => item > 0)
-            .reduce((acc, item) => (acc += item), 0);
-
-        const expense = amounts
-            .filter(item => item < 0)
-            .reduce((acc, item) => (acc += item), 0) * -1; // Rendi positivo
-
-        const balance = income - expense;
-
-        totalIncomeEl.textContent = formatCurrency(income);
-        totalExpenseEl.textContent = formatCurrency(expense);
-        balanceEl.textContent = formatCurrency(balance);
-
-        // Aggiungi classe per colore saldo
-        balanceEl.classList.remove('positive', 'negative', 'zero');
-        if (balance > 0) {
-            balanceEl.classList.add('positive');
-        } else if (balance < 0) {
-            balanceEl.classList.add('negative');
-        } else {
-             balanceEl.classList.add('zero');
-        }
-    }
-
-     // Popola le opzioni del filtro periodo dinamicamente
-    function populatePeriodFilter() {
-        const periods = new Set(); // Usiamo un Set per evitare duplicati
-        transactions.forEach(t => {
-            const yearMonth = t.date.substring(0, 7); // YYYY-MM
-            const year = t.date.substring(0, 4); // YYYY
-            periods.add(yearMonth);
-            periods.add(`year_${year}`);
-        });
-
-        // Rimuovi opzioni vecchie (tranne quelle di default)
-        const existingOptions = periodSelect.querySelectorAll('option:not([value="current_month"]):not([value="current_year"]):not([value="all_time"])');
-        existingOptions.forEach(opt => opt.remove());
-
-        // Ordina i periodi (prima gli anni, poi i mesi)
-        const sortedPeriods = Array.from(periods).sort((a, b) => {
-             if (a.startsWith('year_') && !b.startsWith('year_')) return -1;
-             if (!a.startsWith('year_') && b.startsWith('year_')) return 1;
-             // Se entrambi sono anni o entrambi sono mesi, ordina alfabeticamente (che funziona per date YYYY-MM e 'year_YYYY')
-             return b.localeCompare(a); // Decrescente (più recenti prima)
-        });
-
-        // Aggiungi nuove opzioni
-        sortedPeriods.forEach(period => {
-            const option = document.createElement('option');
-            option.value = period;
-            if (period.startsWith('year_')) {
-                const year = period.substring(5);
-                option.textContent = `Anno ${year}`;
-            } else {
-                 const [year, month] = period.split('-');
-                 const monthName = new Date(year, month - 1, 1).toLocaleString('it-IT', { month: 'long' });
-                 option.textContent = `${monthName.charAt(0).toUpperCase() + monthName.slice(1)} ${year}`;
-                 option.value = `month_${period}`; // Usa un prefisso per distinguerlo dagli anni
-            }
-            periodSelect.appendChild(option);
-        });
-
-        // Reimposta il valore selezionato se esiste ancora, altrimenti torna a 'current_month'
-        if (periodSelect.querySelector(`option[value="${currentFilter}"]`)) {
-             periodSelect.value = currentFilter;
-        } else {
-             currentFilter = 'current_month';
-             periodSelect.value = currentFilter;
-        }
-        updateSelectedPeriodDisplay(); // Aggiorna il testo visualizzato
-    }
-
-
-     // Aggiorna il testo che mostra il periodo selezionato
-    function updateSelectedPeriodDisplay() {
-         const selectedOption = periodSelect.options[periodSelect.selectedIndex];
-         selectedPeriodDisplay.textContent = `(${selectedOption.textContent})`;
-     }
-
-    // Filtra le transazioni in base al periodo selezionato
-    function getFilteredTransactions() {
-        const now = new Date();
-        const currentYear = now.getFullYear();
-        const currentMonth = (now.getMonth() + 1).toString().padStart(2, '0'); // Formato MM
-        const currentYearMonth = `${currentYear}-${currentMonth}`;
-
-        switch (currentFilter) {
-            case 'current_month':
-                return transactions.filter(t => t.date.startsWith(currentYearMonth));
-            case 'current_year':
-                return transactions.filter(t => t.date.startsWith(currentYear.toString()));
-            case 'all_time':
-                return transactions; // Nessun filtro
-            default:
-                if (currentFilter.startsWith('month_')) {
-                    const yearMonth = currentFilter.substring(6); // Rimuovi 'month_'
-                    return transactions.filter(t => t.date.startsWith(yearMonth));
-                } else if (currentFilter.startsWith('year_')) {
-                     const year = currentFilter.substring(5); // Rimuovi 'year_'
-                     return transactions.filter(t => t.date.startsWith(year));
-                }
-                return []; // Caso imprevisto
-        }
-    }
-
-
-    // Renderizza la lista delle transazioni e aggiorna il riepilogo
-    function renderUI() {
-        transactionList.innerHTML = ''; // Pulisci la lista attuale
-
-        const filteredTransactions = getFilteredTransactions();
-
-        if (filteredTransactions.length === 0) {
-            noTransactionsEl.classList.remove('hidden');
-            transactionList.closest('.table-container').style.display = 'none'; // Nascondi tabella se vuota
-        } else {
-            noTransactionsEl.classList.add('hidden');
-            transactionList.closest('.table-container').style.display = 'block'; // Mostra tabella
-             // Ordina per data decrescente prima di visualizzare
-            filteredTransactions.sort((a, b) => new Date(b.date) - new Date(a.date));
-            filteredTransactions.forEach(transaction => addTransactionDOM(transaction, false)); // Aggiunge senza animazione iniziale
-        }
-
-
-        updateOverview(filteredTransactions);
-        populatePeriodFilter(); // Aggiorna le opzioni del filtro ogni volta
-    }
-
-    // Aggiunge una nuova transazione
     function addTransaction(e) {
-        e.preventDefault(); // Evita il ricaricamento della pagina
-
-        if (descriptionInput.value.trim() === '' || amountInput.value.trim() === '' || dateInput.value.trim() === '') {
-            alert('Per favore, compila tutti i campi.');
-            return;
-        }
-
+        e.preventDefault();
+        const type = typeInput.value;
+        const description = descriptionInput.value.trim();
         const amount = parseFloat(amountInput.value);
-        if (isNaN(amount) || amount <= 0) {
-             alert('L\'importo deve essere un numero positivo.');
-             return;
+        const date = dateInput.value;
+        let categoryId = categorySelect.value;
+        const newCategoryName = newCategoryInput.value.trim();
+
+        if (!description || !amount || amount <= 0 || !date || !categoryId) { alert('Compila tutti i campi (Descrizione, Importo, Data, Categoria).'); return; }
+
+        if (categoryId === 'add_new') {
+            if (!newCategoryName) { alert('Inserisci un nome per la nuova categoria.'); return; }
+            const newCategory = addCategory(newCategoryName, type);
+            if (newCategory) {
+                categoryId = newCategory.id;
+                populateCategorySelect(categorySelect, type, categoryId);
+                populateCategorySelect(editCategorySelect, editTypeInput.value);
+                newCategoryInput.value = ''; newCategoryInput.style.display = 'none'; newCategoryInput.required = false;
+            } else { alert('Errore nell\'aggiungere la categoria. Potrebbe esistere già.'); return; }
         }
 
-        const newTransaction = {
-            id: generateID(),
-            type: typeInput.value,
-            description: descriptionInput.value.trim(),
-            amount: amount,
-            date: dateInput.value
-        };
-
+        const newTransaction = { id: generateID('tx'), type, description, amount, category: categoryId, date };
         transactions.push(newTransaction);
         saveTransactions();
-        // addTransactionDOM(newTransaction, true); // Aggiunge con animazione
-        renderUI(); // Ri-renderizza tutto per mantenere l'ordinamento e aggiornare i filtri
-
-        // Pulisci il form
-        descriptionInput.value = '';
-        amountInput.value = '';
-        dateInput.value = ''; // Potresti voler impostare la data corrente di default qui
-        typeInput.value = 'income'; // Reimposta il tipo
-        descriptionInput.focus(); // Metti il focus sul campo descrizione
-
-         // Aggiungi un piccolo effetto visivo alla card del riepilogo
-         const overviewCard = document.getElementById('overview-section');
-         overviewCard.style.transition = 'transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out';
-         overviewCard.style.transform = 'scale(1.02)';
-         overviewCard.style.boxShadow = '0 8px 25px rgba(0, 0, 0, 0.4)';
-         setTimeout(() => {
-             overviewCard.style.transform = 'scale(1)';
-             overviewCard.style.boxShadow = '0 5px 15px rgba(0, 0, 0, 0.2)';
-         }, 200);
+        renderUI();
+        transactionForm.reset();
+        setDefaultDate();
+        populateCategorySelect(categorySelect, typeInput.value);
+        newCategoryInput.style.display = 'none'; newCategoryInput.required = false;
+        descriptionInput.focus();
+        const overviewCard = document.getElementById('overview-section');
+        overviewCard.style.transform = 'scale(1.01)';
+        setTimeout(() => { overviewCard.style.transform = 'scale(1)'; }, 200);
     }
-
-     // Elimina una transazione
     function deleteTransaction(id) {
-        if (!confirm('Sei sicuro di voler eliminare questa transazione?')) {
-            return;
-        }
-
-        // Trova l'elemento da rimuovere per animazione (opzionale)
-        const itemToRemove = transactionList.querySelector(`tr[data-id="${id}"]`);
-        if (itemToRemove) {
-            itemToRemove.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
-            itemToRemove.style.opacity = '0';
-            itemToRemove.style.transform = 'translateX(-50px)';
-            setTimeout(() => {
-                 transactions = transactions.filter(transaction => transaction.id !== id);
-                 saveTransactions();
-                 renderUI(); // Ricarica l'interfaccia
-            }, 300); // Aspetta la fine dell'animazione
-        } else {
-             // Fallback se l'elemento non è trovato (dovrebbe esserci)
-             transactions = transactions.filter(transaction => transaction.id !== id);
-             saveTransactions();
-             renderUI();
-        }
+        if (!confirm('Sei sicuro di voler eliminare questa transazione?')) { return; }
+        transactions = transactions.filter(transaction => transaction.id !== id);
+        saveTransactions();
+        renderUI();
     }
-
-    // Apre il modal di modifica e popola i campi
     function openEditModal(id) {
         const transactionToEdit = transactions.find(t => t.id === id);
         if (!transactionToEdit) return;
-
         editIdInput.value = transactionToEdit.id;
         editTypeInput.value = transactionToEdit.type;
         editDescriptionInput.value = transactionToEdit.description;
         editAmountInput.value = transactionToEdit.amount;
         editDateInput.value = transactionToEdit.date;
-
+        populateCategorySelect(editCategorySelect, transactionToEdit.type, transactionToEdit.category);
+        handleNewCategoryInputVisibility(editCategorySelect, editNewCategoryInput);
         editModal.style.display = 'block';
     }
-
-     // Chiude il modal di modifica
-    function closeEditModal() {
-        editModal.style.display = 'none';
-    }
-
-    // Aggiorna una transazione dopo la modifica nel modal
+    function closeEditModal() { editModal.style.display = 'none'; editNewCategoryInput.style.display = 'none'; editNewCategoryInput.required = false; }
     function updateTransaction(e) {
         e.preventDefault();
-
         const id = editIdInput.value;
-        const updatedAmount = parseFloat(editAmountInput.value);
+        const type = editTypeInput.value;
+        const description = editDescriptionInput.value.trim();
+        const amount = parseFloat(editAmountInput.value);
+        const date = editDateInput.value;
+        let categoryId = editCategorySelect.value;
+        const newCategoryName = editNewCategoryInput.value.trim();
 
-        if (editDescriptionInput.value.trim() === '' || isNaN(updatedAmount) || updatedAmount <= 0 || editDateInput.value.trim() === '') {
-            alert('Per favore, compila correttamente tutti i campi.');
+        if (!description || !amount || amount <= 0 || !date || !categoryId) { alert('Compila correttamente tutti i campi.'); return; }
+
+        if (categoryId === 'add_new') {
+            if (!newCategoryName) { alert('Inserisci un nome per la nuova categoria.'); return; }
+            const newCategory = addCategory(newCategoryName, type);
+            if (newCategory) {
+                categoryId = newCategory.id;
+                populateCategorySelect(categorySelect, typeInput.value);
+                populateCategorySelect(editCategorySelect, type, categoryId);
+            } else { alert('Errore nell\'aggiungere la categoria. Potrebbe esistere già.'); return; }
+        }
+
+        const transactionIndex = transactions.findIndex(t => t.id === id);
+        if (transactionIndex > -1) {
+            transactions[transactionIndex] = { id, type, description, amount, category: categoryId, date };
+            saveTransactions();
+            closeEditModal();
+            renderUI();
+        } else { alert('Errore: Transazione non trovata.'); closeEditModal(); }
+    }
+
+    // --- Filtro, Ricerca, Riepilogo e Grafico ---
+    function updateOverview(filteredTransactions) {
+        const amounts = filteredTransactions.map(t => t.type === 'income' ? t.amount : -t.amount);
+        const income = amounts.filter(item => item > 0).reduce((acc, item) => (acc + item), 0);
+        const expense = Math.abs(amounts.filter(item => item < 0).reduce((acc, item) => (acc + item), 0));
+        const balance = income - expense;
+        totalIncomeEl.textContent = formatCurrency(income);
+        totalExpenseEl.textContent = formatCurrency(expense);
+        balanceEl.textContent = formatCurrency(balance);
+        balanceEl.className = balance > 0 ? 'positive' : balance < 0 ? 'negative' : 'zero';
+    }
+    function populatePeriodFilter() {
+        const periods = new Set();
+        transactions.forEach(t => {
+            const yearMonth = t.date.substring(0, 7);
+            const year = t.date.substring(0, 4);
+            periods.add(`month_${yearMonth}`);
+            periods.add(`year_${year}`);
+        });
+        const existingOptions = periodSelect.querySelectorAll('option:not([value="current_month"]):not([value="current_year"]):not([value="all_time"])');
+        existingOptions.forEach(opt => opt.remove());
+        const sortedPeriods = Array.from(periods).sort((a, b) => b.localeCompare(a));
+        sortedPeriods.forEach(period => {
+            const option = document.createElement('option');
+            option.value = period;
+            if (period.startsWith('year_')) { option.textContent = `Anno ${period.substring(5)}`; }
+            else {
+                const [year, month] = period.substring(6).split('-');
+                const monthName = new Date(year, month - 1, 1).toLocaleString('it-IT', { month: 'long' });
+                option.textContent = `${monthName.charAt(0).toUpperCase() + monthName.slice(1)} ${year}`;
+            }
+            periodSelect.insertBefore(option, periodSelect.querySelector('option[value="all_time"]').nextSibling);
+        });
+        periodSelect.value = currentFilter;
+        updateSelectedPeriodDisplay();
+    }
+    function updateSelectedPeriodDisplay() { const selectedOption = periodSelect.options[periodSelect.selectedIndex]; selectedPeriodDisplay.textContent = `(${selectedOption.textContent})`; }
+    function getFilteredTransactions(filter = currentFilter, term = searchTerm) {
+        let filtered = [];
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonth = (now.getMonth() + 1).toString().padStart(2, '0');
+        const currentYearMonth = `${currentYear}-${currentMonth}`;
+
+        switch (filter) {
+            case 'current_month': filtered = transactions.filter(t => t.date.startsWith(currentYearMonth)); break;
+            case 'current_year': filtered = transactions.filter(t => t.date.startsWith(currentYear.toString())); break;
+            case 'all_time': filtered = [...transactions]; break;
+            default:
+                if (filter.startsWith('month_')) { const yearMonth = filter.substring(6); filtered = transactions.filter(t => t.date.startsWith(yearMonth)); }
+                else if (filter.startsWith('year_')) { const year = filter.substring(5); filtered = transactions.filter(t => t.date.startsWith(year)); }
+                break;
+        }
+        if (term) {
+            const lowerCaseTerm = term.toLowerCase();
+            filtered = filtered.filter(t => t.description.toLowerCase().includes(lowerCaseTerm) || getCategoryNameById(t.category).toLowerCase().includes(lowerCaseTerm));
+        }
+        filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
+        return filtered;
+    }
+       // --- Grafico Chart.js ---
+       function updateChart(filteredTransactions) {
+        // Assicurati che il contesto del canvas sia valido
+        if (!chartCanvas) {
+            console.error("Errore: Contesto del canvas 'overview-chart' non trovato!");
+            chartCanvas.style.display = 'none'; // Nascondi comunque l'area
+            chartMessageEl.textContent = 'Errore inizializzazione grafico.';
+            chartMessageEl.classList.remove('hidden');
             return;
         }
 
-        // Trova l'indice della transazione da aggiornare
-        const transactionIndex = transactions.findIndex(t => t.id === id);
+        // Distruggi grafico esistente se c'è
+        if (overviewChart) {
+            try {
+                overviewChart.destroy();
+                overviewChart = null; // Resetta la variabile
+                console.log("Grafico precedente distrutto.");
+            } catch (e) {
+                console.error("Errore nel distruggere il grafico precedente:", e);
+                // Prosegui comunque tentando di creare il nuovo grafico
+            }
+        }
 
-        if (transactionIndex > -1) {
-            transactions[transactionIndex] = {
-                id: id,
-                type: editTypeInput.value,
-                description: editDescriptionInput.value.trim(),
-                amount: updatedAmount,
-                date: editDateInput.value
-            };
-            saveTransactions();
-            closeEditModal();
-            renderUI(); // Ricarica l'interfaccia
-        } else {
-            alert('Errore: Transazione non trovata.');
-            closeEditModal();
+        const expensesByCategory = {};
+        let totalExpenses = 0;
+
+        filteredTransactions
+            .filter(t => t.type === 'expense')
+            .forEach(t => {
+                // Usa una categoria di fallback se non trovata
+                const categoryName = getCategoryNameById(t.category) || 'Non Categorizzato';
+                expensesByCategory[categoryName] = (expensesByCategory[categoryName] || 0) + t.amount;
+                totalExpenses += t.amount;
+            });
+
+        console.log("Dati per il grafico:", { expensesByCategory, totalExpenses }); // DEBUG
+
+        // Controlla se ci sono dati validi per il grafico
+        const categoryLabels = Object.keys(expensesByCategory);
+        const categoryData = Object.values(expensesByCategory);
+
+        if (totalExpenses <= 0 || categoryLabels.length === 0) {
+            console.log("Nessuna spesa valida trovata per il grafico.");
+            chartCanvas.style.display = 'none'; // Nascondi canvas
+            chartMessageEl.textContent = 'Nessuna spesa nel periodo selezionato per mostrare il grafico.';
+            chartMessageEl.classList.remove('hidden'); // Mostra messaggio
+            return; // Esci dalla funzione
+        }
+
+        // Se ci sono dati, mostra il canvas e nascondi il messaggio
+        console.log("Dati validi trovati, tentativo creazione grafico.");
+        chartCanvas.style.display = 'block'; // Mostra canvas
+        chartMessageEl.classList.add('hidden'); // Nascondi messaggio
+
+        // Colori per il grafico
+        const backgroundColors = [
+            '#4db6ac', '#80cbc4', '#26a69a', '#00897b', '#00796b',
+            '#00695c', '#004d40', '#a7ffeb', '#64ffda', '#1de9b6',
+            '#b2dfdb', '#e0f2f1' // Aggiunti altri colori per più categorie
+        ];
+         // Usa colori diversi o ripeti se le categorie sono più dei colori base
+         const chartBackgroundColors = categoryLabels.map((_, index) => backgroundColors[index % backgroundColors.length]);
+         const chartBorderColors = chartBackgroundColors.map(color => color.replace(')', ', 0.9)').replace('rgb', 'rgba')); // Rendi bordi leggermente trasparenti o solidi
+
+
+        try {
+            overviewChart = new Chart(chartCanvas, {
+                type: 'doughnut', // o 'pie'
+                data: {
+                    labels: categoryLabels,
+                    datasets: [{
+                        label: 'Spese per Categoria',
+                        data: categoryData,
+                        backgroundColor: chartBackgroundColors,
+                        borderColor: chartBorderColors, // Usa colori bordo calcolati
+                        borderWidth: 1,
+                        hoverOffset: 8 // Aumenta leggermente l'effetto hover
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false, // Cruciale per usare l'altezza del contenitore
+                    animation: {
+                        animateScale: true, // Effetto animazione all'apparizione
+                        animateRotate: true
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                color: '#e0f2f1', // Colore testo legenda
+                                padding: 15,
+                                usePointStyle: true, // Usa cerchietti invece di quadrati
+                                boxWidth: 10 // Dimensione cerchietti
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: `Distribuzione Spese (${selectedPeriodDisplay.textContent.slice(1, -1)})`,
+                            color: '#fff',
+                            font: { size: 16 },
+                            padding: { top: 10, bottom: 20 }
+                        },
+                        tooltip: {
+                             backgroundColor: 'rgba(0, 0, 0, 0.8)', // Sfondo tooltip più scuro
+                             titleColor: '#fff',
+                             bodyColor: '#fff',
+                             callbacks: {
+                                label: function(context) {
+                                    let label = context.label || '';
+                                    if (label) { label += ': '; }
+                                    if (context.parsed !== null) {
+                                        label += formatCurrency(context.parsed);
+                                        const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                        const percentage = total > 0 ? ((context.parsed / total) * 100).toFixed(1) : 0;
+                                        label += ` (${percentage}%)`;
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            console.log("Nuovo grafico creato con successo.");
+        } catch(error) {
+            console.error("Errore durante la creazione dell'istanza Chart.js:", error);
+            chartCanvas.style.display = 'none'; // Nascondi in caso di errore
+            chartMessageEl.textContent = 'Errore durante la creazione del grafico.';
+            chartMessageEl.classList.remove('hidden');
         }
     }
+    // --- EXPORT / IMPORT (Excel con SheetJS) ---
+    function exportToExcel() {
+        try {
+            const transactionsSheetData = transactions
+                .sort((a, b) => new Date(a.date) - new Date(b.date))
+                .map(t => ({
+                    'Data': formatDate(t.date),
+                    'Tipo': t.type === 'income' ? 'Entrata' : 'Spesa',
+                    'Categoria ID': t.category,
+                    'Nome Categoria': getCategoryNameById(t.category),
+                    'Descrizione': t.description,
+                    'Importo': t.amount
+                }));
+            const categoriesSheetData = categories.map(c => ({ 'ID Categoria': c.id, 'Nome Categoria': c.name, 'Tipo (income/expense)': c.type }));
+            const budgetsSheetData = categories
+                .filter(c => c.type === 'expense')
+                .map(c => ({ 'ID Categoria': c.id, 'Nome Categoria': c.name, 'Budget Mensile': budgets[c.id] || 0 }));
 
+            const wb = XLSX.utils.book_new();
+            const wsTransactions = XLSX.utils.json_to_sheet(transactionsSheetData);
+            const wsCategories = XLSX.utils.json_to_sheet(categoriesSheetData);
+            const wsBudgets = XLSX.utils.json_to_sheet(budgetsSheetData);
+
+            // Imposta larghezze colonne (opzionale ma consigliato)
+            wsTransactions['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 25 }, { wch: 25 }, { wch: 40 }, { wch: 15 }];
+            wsCategories['!cols'] = [{ wch: 25 }, { wch: 25 }, { wch: 20 }];
+            wsBudgets['!cols'] = [{ wch: 25 }, { wch: 25 }, { wch: 15 }];
+
+            XLSX.utils.book_append_sheet(wb, wsTransactions, 'Transazioni');
+            XLSX.utils.book_append_sheet(wb, wsCategories, 'Categorie');
+            XLSX.utils.book_append_sheet(wb, wsBudgets, 'Budget');
+
+            const filename = `GestioneSpese_Backup_${new Date().toISOString().slice(0, 10)}.xlsx`;
+            XLSX.writeFile(wb, filename);
+        } catch (error) { console.error('Errore export Excel:', error); alert('Errore durante l\'esportazione in Excel.'); }
+    }
+    function importFromExcel(event) {
+        const file = event.target.files[0];
+        if (!file) { return; }
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const data = e.target.result;
+                const workbook = XLSX.read(data, { type: 'array', cellDates: true }); // Tenta di leggere le date
+                const wsTransactions = workbook.Sheets['Transazioni'];
+                const wsCategories = workbook.Sheets['Categorie'];
+                const wsBudgets = workbook.Sheets['Budget'];
+
+                if (!wsTransactions || !wsCategories || !wsBudgets) { throw new Error('File Excel non valido: mancano i fogli "Transazioni", "Categorie" o "Budget".'); }
+
+                // Leggi dati grezzi (prima riga è header)
+                const importedTransactionsRaw = XLSX.utils.sheet_to_json(wsTransactions, { header: 1, raw: false, dateNF: 'yyyy-mm-dd' });
+                const importedCategoriesRaw = XLSX.utils.sheet_to_json(wsCategories, { header: 1 });
+                const importedBudgetsRaw = XLSX.utils.sheet_to_json(wsBudgets, { header: 1 });
+
+                // Processa Categorie
+                const importedCategories = [];
+                const categoryIdMap = new Map();
+                for (let i = 1; i < importedCategoriesRaw.length; i++) { // Salta header
+                    const row = importedCategoriesRaw[i];
+                    const id = row[0]?.trim(); const name = row[1]?.trim(); const type = row[2]?.trim().toLowerCase();
+                    if (!id || !name || (type !== 'income' && type !== 'expense') || categoryIdMap.has(id)) { continue; } // Ignora invalide/duplicate
+                    importedCategories.push({ id, name, type }); categoryIdMap.set(id, name);
+                }
+                if (importedCategories.length === 0) { throw new Error("Nessuna categoria valida trovata nel foglio 'Categorie'."); }
+
+                // Processa Budget
+                const importedBudgets = {};
+                for (let i = 1; i < importedBudgetsRaw.length; i++) { // Salta header
+                    const row = importedBudgetsRaw[i];
+                    const catId = row[0]?.trim(); const budgetAmountRaw = row[2];
+                    if (!catId || !categoryIdMap.has(catId)) { continue; } // ID non valido
+                    const budgetAmount = parseFloat(budgetAmountRaw);
+                    if (!isNaN(budgetAmount) && budgetAmount >= 0) { importedBudgets[catId] = budgetAmount; } // Accetta 0
+                }
+
+                // Processa Transazioni
+                const importedTransactions = [];
+                const errorsTransaction = [];
+                for (let i = 1; i < importedTransactionsRaw.length; i++) { // Salta header
+                    const row = importedTransactionsRaw[i];
+                    let dateValue = row[0]; let dateStr = '';
+                    if (dateValue instanceof Date) { dateStr = dateValue.toISOString().slice(0, 10); }
+                    else if (typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue.substring(0,10))) { dateStr = dateValue.substring(0, 10); } // Prova a prendere YYYY-MM-DD
+                    else { errorsTransaction.push(`Riga ${i + 1}: Formato data non riconosciuto - ${dateValue}`); continue; } // Data non valida
+
+                    const typeRaw = row[1]?.trim(); const catId = row[2]?.trim(); const description = row[4]?.trim(); const amountRaw = row[5];
+                    const type = (typeRaw === 'Entrata') ? 'income' : (typeRaw === 'Spesa') ? 'expense' : null;
+                    const amount = parseFloat(amountRaw);
+
+                    if (!dateStr || !type || !catId || !description || isNaN(amount) || amount <= 0 || !categoryIdMap.has(catId)) {
+                         errorsTransaction.push(`Riga ${i + 1}: Dati mancanti, non validi o Categoria ID non trovata - ${JSON.stringify(row)}`); continue;
+                    }
+                    importedTransactions.push({ date: dateStr, type, category: catId, description, amount }); // ID verrà aggiunto dopo
+                }
+
+                // Conferma Utente
+                let confirmationMessage = `Importazione Excel:\n- ${importedCategories.length} categorie\n- ${Object.keys(importedBudgets).length} budget\n- ${importedTransactions.length} transazioni valide\n`;
+                if (errorsTransaction.length > 0) { confirmationMessage += `\nATTENZIONE: ${errorsTransaction.length} righe transazione ignorate (vedi console).\n`; console.warn("Errori import transazioni:", errorsTransaction); }
+                confirmationMessage += "\nVuoi SOSTITUIRE tutti i dati attuali?";
+
+                if (confirm(confirmationMessage)) {
+                    const finalTransactions = importedTransactions.map(t => ({ ...t, id: generateID('tx') }));
+                    transactions = finalTransactions; categories = importedCategories; budgets = importedBudgets;
+                    saveTransactions(); saveCategories(); saveBudgets();
+                    currentFilter = 'current_month'; searchTerm = ''; searchInput.value = '';
+                    initializeApp(); // Ricarica tutto
+                    alert('Dati importati con successo da Excel!');
+                } else { alert('Importazione annullata.'); }
+
+            } catch (error) { console.error('Errore import Excel:', error); alert(`Errore importazione: ${error.message}`); }
+            finally { importFileInput.value = null; } // Resetta input file
+        };
+        reader.onerror = () => { alert('Errore lettura file Excel.'); importFileInput.value = null; };
+        reader.readAsArrayBuffer(file); // Leggi come ArrayBuffer per SheetJS
+    }
+    // Funzione helper per download CSV (se bottone mantenuto)
+    function downloadFile(filename, content, mimeType) {
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    }
+
+    // --- Render UI Principale ---
+    function renderUI() {
+        transactionList.innerHTML = '';
+        populatePeriodFilter();
+        const filteredTransactions = getFilteredTransactions();
+
+        if (filteredTransactions.length === 0) {
+            noTransactionsEl.classList.remove('hidden');
+            transactionList.closest('.table-container').style.display = 'none';
+        } else {
+            noTransactionsEl.classList.add('hidden');
+            transactionList.closest('.table-container').style.display = 'block';
+            filteredTransactions.forEach(transaction => addTransactionDOM(transaction));
+        }
+        updateOverview(filteredTransactions);
+        updateChart(filteredTransactions);
+        displayBudgets();
+    }
 
     // --- Event Listeners ---
     transactionForm.addEventListener('submit', addTransaction);
     editForm.addEventListener('submit', updateTransaction);
     closeModalBtn.addEventListener('click', closeEditModal);
-    periodSelect.addEventListener('change', (e) => {
-        currentFilter = e.target.value;
-         updateSelectedPeriodDisplay(); // Aggiorna il testo
-        renderUI(); // Ricarica l'interfaccia con il nuovo filtro
+    periodSelect.addEventListener('change', (e) => { currentFilter = e.target.value; updateSelectedPeriodDisplay(); renderUI(); });
+    searchInput.addEventListener('input', () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(() => { searchTerm = searchInput.value.trim(); renderUI(); }, 300); });
+    exportExcelBtn.addEventListener('click', exportToExcel); // Listener per Excel
+    importFileInput.addEventListener('change', importFromExcel); // Listener per Excel
+    // Listener per CSV (se bottone mantenuto)
+    exportCsvBtn.addEventListener('click', () => {
+        if (transactions.length === 0) { alert('Nessuna transazione da esportare.'); return; }
+        const headers = ['Data', 'Tipo', 'Categoria', 'Descrizione', 'Importo']; let csvContent = headers.join(',') + '\n';
+        const transactionsToExport = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date)); // Esporta TUTTE ordinate per data
+        transactionsToExport.forEach(t => {
+            const categoryName = getCategoryNameById(t.category); const description = t.description.includes(',') ? `"${t.description}"` : t.description; const category = categoryName.includes(',') ? `"${categoryName}"` : categoryName;
+            const row = [formatDate(t.date), t.type === 'income' ? 'Entrata' : 'Spesa', category, description, t.amount.toFixed(2)];
+            csvContent += row.join(',') + '\n';
+        });
+        downloadFile(`transazioni_${new Date().toISOString().slice(0, 10)}.csv`, csvContent, 'text/csv;charset=utf-8;');
     });
 
-
-    // Chiudi modal se si clicca fuori dal contenuto
-    window.addEventListener('click', (e) => {
-        if (e.target === editModal) {
-            closeEditModal();
-        }
-    });
-
-    // Imposta la data odierna di default nel form di aggiunta
-     function setDefaultDate() {
-        const today = new Date();
-        // Formato YYYY-MM-DD richiesto dall'input type="date"
-        const year = today.getFullYear();
-        const month = (today.getMonth() + 1).toString().padStart(2, '0'); // Mese da 0-11 a 1-12, con padding
-        const day = today.getDate().toString().padStart(2, '0'); // Giorno con padding
-        dateInput.value = `${year}-${month}-${day}`;
-    }
 
     // --- Inizializzazione ---
-    setDefaultDate(); // Imposta data di default
-    renderUI(); // Renderizza l'interfaccia all'avvio
+    function initializeApp() {
+        setDefaultDate();
+        populateCategorySelect(categorySelect, typeInput.value);
+        populateCategorySelect(editCategorySelect, editTypeInput.value); // Anche per modal modifica
+        renderUI(); // Renderizza l'interfaccia all'avvio
+    }
+
+    initializeApp(); // Avvia l'app
 });
